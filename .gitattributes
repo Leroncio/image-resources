@@ -1,0 +1,9 @@
+# Tratar los binarios de media como binario (sin diffs de texto ni normalización de EOL)
+*.webm binary
+*.mp4  binary
+*.mov  binary
+*.gif  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary

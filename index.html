@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>image-resources · galería</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #2f81f7;
+    --ok: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 24px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header h1 code { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin: 0; }
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+  input[type="search"] {
+    flex: 1 1 200px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  input[type="search"]:focus { outline: none; border-color: var(--accent); }
+  .count { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  main { padding: 20px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .media {
+    background: #000;
+    aspect-ratio: 16 / 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .media video, .media img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .meta { padding: 10px 12px; }
+  .name {
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
+    margin-bottom: 6px;
+  }
+  .size { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .links { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.copied { border-color: var(--ok); color: var(--ok); }
+  .state { color: var(--muted); text-align: center; padding: 60px 20px; }
+  .state.err { color: #f85149; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Galería · <code>image-resources</code></h1>
+  <p class="sub">Almacén temporal de imágenes y videos. Los enlaces apuntan al CDN de jsDelivr.</p>
+  <div class="controls">
+    <input type="search" id="search" placeholder="Filtrar por nombre…" autocomplete="off">
+    <span class="count" id="count"></span>
+  </div>
+</header>
+<main>
+  <div id="status" class="state">Cargando…</div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<script>
+  // ---- Configuración ----
+  const OWNER  = "Leroncio";
+  const REPO   = "image-resources";
+  const BRANCH = "master";
+  const FOLDERS = ["preview", ""];          // carpetas a escanear ("" = raíz)
+  const VIDEO_EXT = ["webm", "mp4", "mov"];
+  const IMAGE_EXT = ["gif", "png", "jpg", "jpeg", "webp"];
+  // ------------------------
+
+  const MEDIA_EXT = [...VIDEO_EXT, ...IMAGE_EXT];
+  const gridEl   = document.getElementById("grid");
+  const statusEl = document.getElementById("status");
+  const countEl  = document.getElementById("count");
+  const searchEl = document.getElementById("search");
+  let items = [];
+
+  const ext = n => n.split(".").pop().toLowerCase();
+  const isMedia = n => MEDIA_EXT.includes(ext(n));
+  const fmtSize = b => b < 1024 ? b + " B"
+      : b < 1048576 ? (b/1024).toFixed(1) + " KB"
+      : (b/1048576).toFixed(1) + " MB";
+  const cdnUrl = path => `https://cdn.jsdelivr.net/gh/${OWNER}/${REPO}@${BRANCH}/${path}`;
+  const rawUrl = path => `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${path}`;
+
+  async function listFolder(folder) {
+    const api = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${folder}?ref=${BRANCH}`;
+    const res = await fetch(api);
+    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+    const data = await res.json();
+    return data
+      .filter(f => f.type === "file" && isMedia(f.name))
+      .map(f => ({ name: f.name, path: f.path, size: f.size }));
+  }
+
+  async function load() {
+    try {
+      const results = await Promise.all(FOLDERS.map(f =>
+        listFolder(f).catch(() => [])   // ignora carpetas que no existan
+      ));
+      items = results.flat().sort((a, b) => a.path.localeCompare(b.path));
+      statusEl.style.display = "none";
+      render(items);
+    } catch (e) {
+      statusEl.textContent = "No se pudo cargar el índice: " + e.message +
+        " (la API de GitHub limita a 60 peticiones/hora sin autenticar).";
+      statusEl.classList.add("err");
+    }
+  }
+
+  function copyBtn(label, text) {
+    const b = document.createElement("button");
+    b.className = "btn";
+    b.textContent = label;
+    b.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        const old = b.textContent;
+        b.textContent = "✓ copiado";
+        b.classList.add("copied");
+        setTimeout(() => { b.textContent = old; b.classList.remove("copied"); }, 1200);
+      } catch { window.prompt("Copia el enlace:", text); }
+    };
+    return b;
+  }
+
+  function render(list) {
+    gridEl.innerHTML = "";
+    countEl.textContent = list.length + (list.length === 1 ? " archivo" : " archivos");
+    for (const it of list) {
+      const url = cdnUrl(it.path);
+      const card = document.createElement("div");
+      card.className = "card";
+
+      const media = document.createElement("div");
+      media.className = "media";
+      if (VIDEO_EXT.includes(ext(it.name))) {
+        const v = document.createElement("video");
+        v.src = url; v.controls = true; v.muted = true;
+        v.loop = true; v.playsInline = true; v.preload = "metadata";
+        media.appendChild(v);
+      } else {
+        const img = document.createElement("img");
+        img.src = url; img.loading = "lazy"; img.alt = it.name;
+        media.appendChild(img);
+      }
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const name = document.createElement("div");
+      name.className = "name"; name.textContent = it.name;
+      const size = document.createElement("div");
+      size.className = "size"; size.textContent = fmtSize(it.size) + " · " + it.path;
+      const links = document.createElement("div");
+      links.className = "links";
+      links.appendChild(copyBtn("CDN", url));
+      links.appendChild(copyBtn("raw", rawUrl(it.path)));
+      const open = document.createElement("a");
+      open.href = url; open.target = "_blank"; open.rel = "noopener";
+      open.className = "btn"; open.textContent = "abrir ↗";
+      links.appendChild(open);
+
+      meta.append(name, size, links);
+      card.append(media, meta);
+      gridEl.appendChild(card);
+    }
+  }
+
+  searchEl.addEventListener("input", () => {
+    const q = searchEl.value.toLowerCase().trim();
+    render(items.filter(it => it.path.toLowerCase().includes(q)));
+  });
+
+  load();
+</script>
+</body>
+</html>
